@@ -1,6 +1,6 @@
 /*
    PROJECT: NewGame Pocket OS
-   VERSION: V0.6 (FINAL FIX)
+   VERSION: V0.6 (Cheater Edition)
    DEV: Rion
    WIFI: UNAND (Hardcoded)
 */
@@ -20,7 +20,6 @@
 const char* ssid = "UNAND";     
 const char* password = "HardiknasDiAndalas"; 
 
-// Gunakan Google NTP agar lebih stabil
 const char* ntpServer = "time.google.com";
 const long  gmtOffset_sec = 25200; // WIB
 const int   daylightOffset_sec = 0;
@@ -45,7 +44,8 @@ enum SystemState {
   STATE_SLEEP, STATE_EYES, STATE_EYE_MENU, STATE_READ_SELECT, STATE_READING, 
   STATE_BOOT, STATE_MENU, 
   GAME_SNAKE, GAME_PONG, GAME_DOOM, GAME_PACMAN, GAME_DINO, GAME_RACE,
-  STATE_HIGHSCORE, STATE_UPDATE_OS, STATE_GAMEOVER, STATE_INFO,
+  STATE_HIGHSCORE, STATE_RESET_CONFIRM, // State baru untuk reset
+  STATE_UPDATE_OS, STATE_GAMEOVER, STATE_INFO,
   STATE_SYNC_TIME
 };
 SystemState currentState = STATE_SLEEP;
@@ -63,14 +63,11 @@ String menuItems[] = {
   "9. Info System", "10. Update Game", "11. Sleep Mode"
 };
 
-// Menu Eye Mode
+// Eye & Jokes
 int eyeMenuIndex = 0;
 String eyeMenuItems[] = {"Game Mode", "Read Mode", "Back"};
-
-// Read Mode
 int readCatIndex = 0;
 int scrollY = 0;
-// Ditambah menu [BACK] di index 3
 String jokeTitle[] = {"Jokes Bapak2", "Jokes Programming", "Jokes Receh", "[ BACK ]"}; 
 String jokesContent[] = {
   "Kenapa zombie kalo nyerang bareng2?\nKalo sendiri namanya zomblo.\n\nIkan apa yang suka berhenti?\nIkan pause.\n\nAyam apa yang paling besar?\nAyam semesta.",
@@ -81,9 +78,16 @@ String jokesContent[] = {
 char timeString[6] = "--:--"; 
 bool timeSynced = false;
 
+// Score & Cheat
 int currentScore = 0;
 int hsSnake=0, hsPong=0, hsDoom=0, hsPacman=0, hsDino=0, hsRace=0;
 int gameID = 0; 
+
+// Cheat Variables
+unsigned long btnPressStart = 0;
+bool godMode = false;
+unsigned long godModeStart = 0;
+int resetStep = 0; // Untuk konfirmasi 3x
 
 // Robot Eyes
 int eyeW = 24, eyeH = 48, eyeGap = 34;
@@ -100,7 +104,11 @@ const char* loginIndex = "<form method='POST' action='/update' enctype='multipar
 // ================================================================
 // 4. BITMAP ASSETS
 // ================================================================
-const unsigned char dino_bmp[] PROGMEM = { 0x06,0x00, 0x07,0x00, 0x07,0x00, 0x16,0x00, 0x1f,0x00, 0x1e,0x00, 0x1e,0x00, 0x0a,0x00, 0x0a,0x00, 0x00,0x00 }; 
+// Dino Besar (14x14)
+const unsigned char dino_bmp[] PROGMEM = {
+  0x01, 0xe0, 0x01, 0xe0, 0x03, 0xe0, 0x03, 0xe0, 0x07, 0xf0, 0x0f, 0xf0, 0x1f, 0xf8, 0x1f, 0xfc, 
+  0x1f, 0xfc, 0x07, 0xe0, 0x07, 0xe0, 0x04, 0x20, 0x06, 0x30, 0x02, 0x20
+};
 const unsigned char bird_bmp[] PROGMEM = { 0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81 }; 
 const unsigned char cactus_bmp[] PROGMEM = { 0x18, 0x18, 0x3c, 0x3c, 0x3c, 0x18, 0x18, 0x18, 0x18, 0x18 }; 
 
@@ -139,10 +147,48 @@ void saveHighScore(int gID, int score) {
   pref.end();
 }
 
+void resetAllHighscores() {
+  pref.begin("ng-os", false);
+  pref.clear(); // Hapus semua data
+  pref.end();
+  hsSnake=0; hsPong=0; hsDoom=0; hsPacman=0; hsDino=0; hsRace=0;
+}
+
 void refreshTimeDisplay() {
   if(!timeSynced) return; 
   struct tm timeinfo;
   if(getLocalTime(&timeinfo)){ sprintf(timeString, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min); }
+}
+
+// CHEAT SYSTEM LOGIC
+void checkCheats() {
+  // Cek Durasi GodMode
+  if(godMode && millis() - godModeStart > 30000) {
+    godMode = false;
+    beep(50); delay(50); beep(50); // Nada habis
+  }
+
+  // Cek Input Cheat
+  if(digitalRead(SW_PIN) == LOW) {
+    if(btnPressStart == 0) btnPressStart = millis();
+    
+    // Cheat 2: God Mode (Tahan + Bawah)
+    if(analogRead(VRY_PIN) > 3500 && millis() - btnPressStart > 500) {
+      godMode = true;
+      godModeStart = millis();
+      display.invertDisplay(true); beep(200); delay(100); display.invertDisplay(false);
+      btnPressStart = millis() + 5000; // Reset timer biar gak nambah skor juga
+    }
+    
+    // Cheat 1: Score +10 (Tahan 3 Detik)
+    if(millis() - btnPressStart > 3000) {
+      currentScore += 10;
+      display.invertDisplay(true); beep(50); display.invertDisplay(false);
+      btnPressStart = millis(); // Reset timer agar nambah per 3 detik
+    }
+  } else {
+    btnPressStart = 0;
+  }
 }
 
 // ================================================================
@@ -157,14 +203,18 @@ void loop() {
     case STATE_READING:    runReading(); break;       
     case STATE_BOOT:       runBoot(); break;
     case STATE_MENU:       runMenu(); break;
-    case GAME_SNAKE:       runSnake(); break;
-    case GAME_PONG:        runPong(); break;
-    case GAME_DOOM:        runDoom(); break;
-    case GAME_PACMAN:      runPacman(); break;
-    case GAME_DINO:        runDino(); break;
-    case GAME_RACE:        runRace(); break;
+    
+    // Games
+    case GAME_SNAKE:       checkCheats(); runSnake(); break;
+    case GAME_PONG:        checkCheats(); runPong(); break;
+    case GAME_DOOM:        checkCheats(); runDoom(); break;
+    case GAME_PACMAN:      checkCheats(); runPacman(); break;
+    case GAME_DINO:        checkCheats(); runDino(); break;
+    case GAME_RACE:        checkCheats(); runRace(); break;
+    
     case STATE_SYNC_TIME:  runSyncTime(); break;
     case STATE_HIGHSCORE:  runHighScoreList(); break;
+    case STATE_RESET_CONFIRM: runResetConfirm(); break; // New State
     case STATE_UPDATE_OS:  runUpdateOS(); break;
     case STATE_GAMEOVER:   runGameOver(); break;
     case STATE_INFO:       runInfo(); break;
@@ -237,14 +287,12 @@ void runEyeMenu() {
   }
 }
 
-// FIX: READ MODE NAVIGATION
 void runReadSelect() {
   display.clearDisplay(); display.setCursor(0,0); display.println("PILIH BACAAN:");
   display.drawLine(0,8,128,8,WHITE);
-  for(int i=0; i<4; i++) { // Ada 4 menu sekarang (termasuk BACK)
+  for(int i=0; i<4; i++) { 
     if(i==readCatIndex) display.setCursor(0, 20+(i*10)); else display.setCursor(10, 20+(i*10));
-    if(i==readCatIndex) display.print(">");
-    display.println(jokeTitle[i]);
+    if(i==readCatIndex) display.print(">"); display.println(jokeTitle[i]);
   }
   display.display();
   int y = analogRead(VRY_PIN);
@@ -252,7 +300,7 @@ void runReadSelect() {
   if(y < 1000) { readCatIndex--; if(readCatIndex<0) readCatIndex=3; delay(200); }
   
   if(digitalRead(SW_PIN) == LOW) { 
-    if(readCatIndex == 3) { currentState = STATE_EYE_MENU; } // Back Logic
+    if(readCatIndex == 3) { currentState = STATE_EYE_MENU; } 
     else { scrollY = 0; currentState = STATE_READING; }
     delay(300); 
   }
@@ -269,7 +317,6 @@ void runReading() {
   int y = analogRead(VRY_PIN);
   if(y > 3000) { scrollY+=2; } 
   if(y < 1000 && scrollY > 0) { scrollY-=2; } 
-  // Klik tombol untuk kembali ke Select
   if(digitalRead(SW_PIN) == LOW) { currentState = STATE_READ_SELECT; delay(300); }
 }
 
@@ -308,7 +355,7 @@ void runMenu() {
   if (yVal > 3000) { menuIndex++; if(menuIndex >= menuTotal) menuIndex = 0; beep(10); delay(150); }
   if (yVal < 1000) { menuIndex--; if(menuIndex < 0) menuIndex = menuTotal - 1; beep(10); delay(150); }
   if (digitalRead(SW_PIN) == LOW) {
-    delay(300); currentScore = 0;
+    delay(300); currentScore = 0; godMode = false; // Reset GodMode saat mulai game
     if (menuIndex == 0) { gameID=1; currentState = GAME_SNAKE; setupSnake(); }
     else if (menuIndex == 1) { gameID=2; currentState = GAME_PONG; setupPong(); }
     else if (menuIndex == 2) { gameID=3; currentState = GAME_DOOM; setupDoom(); }
@@ -342,9 +389,14 @@ void runSnake() {
   if(y>3000 && sDy==0){sDx=0;sDy=1;} if(y<1000 && sDy==0){sDx=0;sDy=-1;}
   for(int i=slen-1; i>0; i--){sx[i]=sx[i-1]; sy[i]=sy[i-1];} sx[0]+=sDx; sy[0]+=sDy;
   if(sx[0]>31) sx[0]=0; if(sx[0]<0) sx[0]=31; if(sy[0]>15) sy[0]=0; if(sy[0]<0) sy[0]=15;
-  for(int i=1; i<slen; i++) if(sx[0]==sx[i] && sy[0]==sy[i]) currentState=STATE_GAMEOVER;
+  
+  if(!godMode) {
+     for(int i=1; i<slen; i++) if(sx[0]==sx[i] && sy[0]==sy[i]) currentState=STATE_GAMEOVER;
+  }
+  
   if(sx[0]==fX && sy[0]==fY){ currentScore++; slen++; beep(30); spawnFoodSafe(); }
   display.clearDisplay(); display.setTextSize(1); display.setCursor(0,0); display.print(currentScore);
+  if(godMode) { display.setCursor(40,0); display.print("GOD MODE"); }
   display.fillRect(fX*4, fY*4, 4, 4, WHITE);
   for(int i=0; i<slen; i++) display.fillRect(sx[i]*4, sy[i]*4, 4, 4, WHITE);
   display.display(); delay(80);
@@ -360,10 +412,14 @@ void runPong() {
   if(yVal>3000 && paddleY<48) paddleY+=3; if(yVal<1000 && paddleY>0) paddleY-=3;
   bX+=bDX; bY+=bDY; if(bY<=0 || bY>=60) bDY*=-1;
   if(bX>64) { if(bY>cpuY+8) cpuY+=2; else cpuY-=2; }
+  
   if(bX<=4 && bY>=paddleY && bY<=paddleY+16) { bDX=2; bX=5; currentScore++; beep(20); }
   if(bX>=120 && bY>=cpuY && bY<=cpuY+16) { bDX=-2; bX=119; }
-  if(bX<0 || bX>128) currentState=STATE_GAMEOVER;
+  if(!godMode && (bX<0 || bX>128)) currentState=STATE_GAMEOVER;
+  if(godMode && (bX<0 || bX>128)) { bDX*=-1; } // GodMode pantul balik
+
   display.clearDisplay(); display.setCursor(60,0); display.print(currentScore);
+  if(godMode) { display.setCursor(80,0); display.print("GOD"); }
   display.fillRect(0, paddleY, 4, 16, WHITE); display.fillRect(124, cpuY, 4, 16, WHITE);
   display.fillCircle(bX, bY, 2, WHITE); display.display(); delay(15);
 }
@@ -407,14 +463,21 @@ void runDoom() {
   if (eAlive && dE < 5.0) {
      int eS = 50 / dE; int scrX = 64; 
      display.fillCircle(scrX, 32, eS/2, WHITE); display.fillCircle(scrX, 32, eS/4, BLACK); 
-     eX+=(doomX-eX)*0.03; eY+=(doomY-eY)*0.03; if(dE < 0.5) currentState=STATE_GAMEOVER;
+     eX+=(doomX-eX)*0.03; eY+=(doomY-eY)*0.03; 
+     if(!godMode && dE < 0.5) currentState=STATE_GAMEOVER;
   }
   display.fillTriangle(48,64,80,64,64,45,WHITE);
+  if(godMode) { display.setCursor(0,0); display.print("GOD MODE"); } else { display.setCursor(0,0); display.print(currentScore); }
   if(digitalRead(SW_PIN)==LOW) {
     display.invertDisplay(true); beep(20);
+    // Fix Respawn Bug: Make sure new position is far enough
     if(eAlive && dE < 3.5) { 
       currentScore++; eAlive=false; beep(100); 
-      eX=int(doomX)+random(-4,4); eY=int(doomY)+random(-4,4); if(eX<1)eX=1; if(eY<1)eY=1; eAlive=true;
+      do {
+         eX=int(doomX)+random(-4,4); eY=int(doomY)+random(-4,4); 
+         if(eX<1)eX=1; if(eY<1)eY=1;
+      } while(sqrt(pow(doomX-eX,2) + pow(doomY-eY,2)) < 2.0); // Ensure not too close
+      eAlive=true;
     }
     delay(50); display.invertDisplay(false);
   }
@@ -451,7 +514,8 @@ void runPacman() {
     if(pmMap[pacY][pacX] == 0) { pmMap[pacY][pacX] = 2; currentScore++; pelletsLeft--; beep(10); }
     lastPacMove = millis();
   }
-  if(millis() - lastGhostMove > 250) {
+  // Slower Ghost (350ms)
+  if(millis() - lastGhostMove > 350) {
     int gNextX=ghostX, gNextY=ghostY;
     if(ghostX < pacX) gNextX++; else if(ghostX > pacX) gNextX--;
     if(pmMap[ghostY][gNextX] == 1) gNextX = ghostX; 
@@ -460,7 +524,7 @@ void runPacman() {
     ghostX = gNextX; ghostY = gNextY;
     lastGhostMove = millis();
   }
-  if(pacX==ghostX && pacY==ghostY) currentState=STATE_GAMEOVER;
+  if(!godMode && pacX==ghostX && pacY==ghostY) currentState=STATE_GAMEOVER;
   if(pelletsLeft <= 0) { currentScore+=5; setupPacman(); }
 
   display.clearDisplay();
@@ -478,18 +542,19 @@ void runPacman() {
   if(pacDir==3) display.fillTriangle(px, py, px-2, py+4, px+2, py+4, BLACK); 
   display.fillTriangle(ghostX*8, ghostY*8+8, ghostX*8+4, ghostY*8, ghostX*8+8, ghostY*8+8, WHITE);
   display.setCursor(0, 56); display.print("Score:"); display.print(currentScore);
+  if(godMode) display.print(" GOD");
   display.display();
 }
 
 // ================================================================
-// 14. GAME: DINO RUN (FIXED SIZE & SPEED)
+// 14. GAME: DINO RUN (FIXED SIZE & JUMP)
 // ================================================================
 int dinoY, dinoVel; 
 int obstacleX, obstacleType; 
 bool isDucking;
 
 void setupDino() { 
-  dinoY=50; dinoVel=0; obstacleX=128; obstacleType=0; currentScore=0; // Y=50 agar sejajar tanah
+  dinoY=58; dinoVel=0; obstacleX=128; obstacleType=0; // Ground at 58
 }
 
 void runDino() {
@@ -497,41 +562,45 @@ void runDino() {
   bool jump = (y<1000) || (digitalRead(SW_PIN)==LOW);
   bool duck = (y>3000);
 
-  if(jump && dinoY==50) { dinoVel = -5; beep(30); } 
+  // Fisika Lompat (Lebih tinggi)
+  if(jump && dinoY>=58) { dinoVel = -8; beep(30); } 
   dinoY += dinoVel;
-  if(dinoY < 50) dinoVel += 1; 
-  else { dinoY = 50; dinoVel = 0; } 
+  if(dinoY < 58) dinoVel += 1; // Gravity
+  else { dinoY = 58; dinoVel = 0; } 
 
   isDucking = duck;
-  obstacleX -= 2; // Speed dikurangi (Slowed down 50%)
-  if(obstacleX < -10) { 
+  obstacleX -= 3; 
+  if(obstacleX < -15) { 
     obstacleX = 128; currentScore++; beep(10); 
     if(random(0,10) > 6) obstacleType = 1; else obstacleType = 0;
   }
 
-  int dinoH = isDucking ? 5 : 10;
   // Hitbox
-  if(obstacleType == 0 && obstacleX < 18 && obstacleX > 2 && dinoY > 45) { currentState=STATE_GAMEOVER; }
-  if(obstacleType == 1 && obstacleX < 18 && obstacleX > 2 && !isDucking) { currentState=STATE_GAMEOVER; }
+  if(!godMode) {
+    if(obstacleType == 0 && obstacleX < 20 && obstacleX > 5 && dinoY > 50) currentState=STATE_GAMEOVER;
+    if(obstacleType == 1 && obstacleX < 20 && obstacleX > 5 && !isDucking) currentState=STATE_GAMEOVER;
+  }
 
   display.clearDisplay();
-  display.drawLine(0, 60, 128, 60, WHITE); // Tanah di Y=60
+  display.drawFastHLine(0, 62, 128, WHITE); // Tanah Y=62
   display.setCursor(100,0); display.print(currentScore);
+  if(godMode) { display.setCursor(0,0); display.print("GOD"); }
   
-  if(!isDucking) display.drawBitmap(10, dinoY-9, dino_bmp, 10, 10, WHITE); // Align feet
-  else display.fillRect(10, dinoY-4, 10, 5, WHITE); 
+  // Dino (14x14 Bitmap) - Bigger
+  if(!isDucking) display.drawBitmap(10, dinoY-14, dino_bmp, 14, 14, WHITE);
+  else display.fillRect(10, dinoY-7, 14, 7, WHITE); // Ducking
 
-  if(obstacleType == 0) display.drawBitmap(obstacleX, 50, cactus_bmp, 8, 10, WHITE);
+  if(obstacleType == 0) display.drawBitmap(obstacleX, 52, cactus_bmp, 8, 10, WHITE);
   else display.drawBitmap(obstacleX, 42, bird_bmp, 8, 8, WHITE); 
   
   display.display();
 }
 
 // ================================================================
-// 15. GAME: TURBO RACE (FIXED PERSPECTIVE)
+// 15. GAME: TURBO RACE (FIXED SPAWN)
 // ================================================================
 int carX;
-int obsX, obsZ; // obsX range -100 sampai 100
+int obsX, obsZ; 
 void setupRace() { carX=64; obsX=0; obsZ=0; } 
 
 void runRace() {
@@ -542,26 +611,22 @@ void runRace() {
   obsZ += 2; 
   if(obsZ > 64) { 
     obsZ=0; 
-    obsX=random(-100, 100); // Random Full Width
+    // Random menyebar penuh dari kiri(-100) sampai kanan(100)
+    obsX=random(-100, 100); 
     currentScore++; beep(10);
   }
 
-  // Perspective Logic (Trapezoid)
-  // Lebar Jalan di Z (dekat) = 128
-  // Lebar Jalan di 0 (jauh) = 8
+  // Perspective Logic
   int roadWidthAtZ = map(obsZ, 0, 64, 8, 128);
-  
-  // Posisi X di layar berdasarkan lebar jalan saat ini
-  // obsX adalah persentase (-100% sampai 100%) dari tengah jalan
   int drawObsX = 64 + (obsX * roadWidthAtZ / 200); 
-  
   int drawObsY = 32 + (obsZ / 2); 
   int obsSize = map(obsZ, 0, 64, 2, 14);
 
-  if(obsZ > 55 && abs(carX - drawObsX) < (obsSize/2 + 6)) currentState=STATE_GAMEOVER;
+  if(!godMode && obsZ > 55 && abs(carX - drawObsX) < (obsSize/2 + 6)) currentState=STATE_GAMEOVER;
 
   display.clearDisplay();
   display.setCursor(0,0); display.print(currentScore);
+  if(godMode) { display.setCursor(40,0); display.print("GOD"); }
   
   display.drawLine(0, 32, 128, 32, WHITE);
   display.drawLine(60, 32, 0, 64, WHITE);   
@@ -577,7 +642,28 @@ void runRace() {
 // ================================================================
 // 16. UTILITIES
 // ================================================================
-// SYNC TIME (FIX FREEZE & RETRY)
+// RESET CONFIRMATION
+void runResetConfirm() {
+  display.clearDisplay();
+  display.setCursor(20, 20); display.println("YAKIN HAPUS?");
+  display.setCursor(50, 35); display.print(resetStep); display.print("/3");
+  display.setCursor(10, 50); display.print("< TIDAK    YA >");
+  display.display();
+
+  int x = analogRead(VRX_PIN);
+  if(x > 3000) { // YA (Kanan)
+    beep(50); resetStep++; delay(300);
+    if(resetStep > 3) {
+      resetAllHighscores();
+      display.clearDisplay(); display.setCursor(30,30); display.print("DELETED!"); display.display();
+      delay(1000); currentState = STATE_HIGHSCORE;
+    }
+  }
+  if(x < 1000) { // TIDAK (Kiri)
+    beep(50); resetStep=0; currentState = STATE_HIGHSCORE; delay(300);
+  }
+}
+
 void runSyncTime() {
   display.clearDisplay(); display.setCursor(0,0); display.println("Syncing Time..."); display.display();
   WiFi.begin(ssid, password);
@@ -586,7 +672,6 @@ void runSyncTime() {
 
   if(WiFi.status() == WL_CONNECTED) {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    // Retry loop untuk getLocalTime
     for(int i=0; i<5; i++) {
       struct tm timeinfo;
       if(getLocalTime(&timeinfo)){
@@ -614,9 +699,17 @@ void runHighScoreList() {
   display.setCursor(64,22); display.print("Pac: "); display.print(hsPacman);
   display.setCursor(0,32); display.print("Din: "); display.print(hsDino);
   display.setCursor(64,32); display.print("Race: "); display.print(hsRace);
-  display.setCursor(0,55); display.print("[Click to Back]");
+  // Tombol Reset
+  display.setCursor(25, 48); display.print("[ RESET DATA ]");
+  
   display.display();
+  
+  // Logic Navigasi ke Reset
   if(digitalRead(SW_PIN)==LOW) { delay(500); currentState=STATE_MENU; }
+  
+  // Shortcut Reset (Geser Bawah)
+  int y = analogRead(VRY_PIN);
+  if(y > 3000) { beep(50); resetStep=1; currentState = STATE_RESET_CONFIRM; delay(500); }
 }
 
 void setupUpdate() {
@@ -653,6 +746,6 @@ void runGameOver() {
 
 void runInfo() {
   display.clearDisplay(); display.setCursor(0,0); display.println("INFO SYSTEM");
-  display.println("- NTP Google"); display.println("- Dino Fix"); display.println("- Race Pro");
+  display.println("- Cheat Enabled"); display.println("- Secure Reset"); display.println("- Final Fixes");
   display.display(); if(digitalRead(SW_PIN)==LOW) { delay(500); currentState=STATE_MENU; }
 }
